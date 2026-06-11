@@ -1,0 +1,31 @@
+# 编译产物
+*.o
+*.so
+*.a
+*.dylib
+*.dll
+*.exe
+db_server
+db_client
+db_test
+
+# 构建目录
+build/
+cmake-build-*/
+
+# 数据目录
+data/
+
+# IDE配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 日志文件
+*.log
+
+# 临时文件
+*.tmp
+*.bak
