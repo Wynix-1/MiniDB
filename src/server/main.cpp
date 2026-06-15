@@ -55,6 +55,15 @@ int main(int argc, char* argv[]) {
     auto handler = [&](const String& request) -> String {
         try {
             size_t pos = 0;
+            // Parse JSON: {"sql":"..."} - find the "sql" key first
+            size_t sql_key_pos = request.find("\"sql\"");
+            if (sql_key_pos == String::npos) {
+                return JsonSerializer::serialize_response(false, "Invalid request format");
+            }
+            // Move past "sql" and the colon
+            pos = sql_key_pos + 5; // skip "sql"
+            while (pos < request.size() && request[pos] != ':') ++pos;
+            ++pos; // skip ':'
             String sql = JsonSerializer::parse_string_value(request, pos);
 
             SQLStatement stmt = parser.parse(sql);

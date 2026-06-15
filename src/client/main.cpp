@@ -41,100 +41,83 @@ void print_usage() {
 }
 
 void print_table_result(const String& response) {
-    size_t pos = 0;
-
-    String success_str = JsonSerializer::parse_value(response, pos);
-    bool success = (success_str == "true");
-
-    pos = response.find("\"message\"");
+    // Extract success
+    size_t pos = response.find("\"success\":");
     if (pos == String::npos) return;
-    pos += 9;
-    while (pos < response.size() && response[pos] != '"') ++pos;
-    ++pos;
-    String message = JsonSerializer::parse_string_value(response, pos);
+    pos += 10;
+    while (pos < response.size() && response[pos] == ' ') ++pos;
+    bool success = (response[pos] == 't');
 
+    // Extract message
+    pos = response.find("\"message\":\"");
+    if (pos == String::npos) return;
+    pos += 12;
+    size_t msg_end = response.find('\"', pos);
+    if (msg_end == String::npos) return;
+    String message = response.substr(pos, msg_end - pos);
+
+    // Always print message for non-success
     if (!success) {
-        std::cout << "ERROR " << message.c_str() << std::endl;
+        std::cout << "ERROR: " << message.c_str() << std::endl;
         return;
     }
 
-    pos = response.find("\"rows\"");
+    // Extract rows
+    pos = response.find("\"rows\":[");
     if (pos == String::npos) {
         std::cout << message.c_str() << std::endl;
         return;
     }
+    pos += 8; // skip "rows":[
 
-    pos = response.find('[', pos);
-    if (pos == String::npos) {
+    // Check if rows is empty array
+    while (pos < response.size() && response[pos] == ' ') ++pos;
+    if (pos < response.size() && response[pos] == ']') {
+        // No rows - print message (for DDL commands)
         std::cout << message.c_str() << std::endl;
         return;
     }
 
-    size_t array_start = pos;
-    int depth = 1;
-    ++pos;
-
-    while (pos < response.size() && depth > 0) {
-        if (response[pos] == '[') ++depth;
-        else if (response[pos] == ']') --depth;
-        ++pos;
-    }
-
-    String rows_json = response.substr(array_start, pos - array_start);
-
-    if (rows_json.size() <= 2) {
-        std::cout << "Empty set" << std::endl;
-        return;
-    }
-
+    // Parse rows - each row is {key:value,...}
     Array<Array<String>> rows_data;
     Array<String> headers;
     bool headers_set = false;
 
-    size_t rpos = 1;
-    while (rpos < rows_json.size()) {
-        if (rows_json[rpos] == '{') {
-            size_t obj_start = rpos;
-            int obj_depth = 1;
-            ++rpos;
+    pos = response.find('{', pos);
+    while (pos < response.size() && pos != String::npos) {
+        size_t obj_end = response.find('}', pos);
+        if (obj_end == String::npos) break;
 
-            while (rpos < rows_json.size() && obj_depth > 0) {
-                if (rows_json[rpos] == '{') ++obj_depth;
-                else if (rows_json[rpos] == '}') --obj_depth;
-                ++rpos;
-            }
+        String row_json = response.substr(pos + 1, obj_end - pos - 1);
 
-            String row_json = rows_json.substr(obj_start, rpos - obj_start);
+        Array<String> row_values;
+        Array<String> row_headers;
 
-            Array<String> row_values;
-            Array<String> row_headers;
+        size_t kpos = 0;
+         while (kpos < row_json.size()) {
+             kpos = row_json.find('\"', kpos);
+             if (kpos == String::npos) break;
+             ++kpos;
+             size_t parse_pos = kpos;
+             String key = JsonSerializer::parse_string_value(row_json, parse_pos);
+             
+             parse_pos = row_json.find(':', parse_pos);
+             if (parse_pos == String::npos) break;
+             ++parse_pos;
+             String value = JsonSerializer::parse_value(row_json, parse_pos);
+             kpos = parse_pos;
 
-            size_t kpos = 1;
-            while (kpos < row_json.size()) {
-                while (kpos < row_json.size() && row_json[kpos] != '"') ++kpos;
-                if (kpos >= row_json.size()) break;
-                ++kpos;
-
-                String key = JsonSerializer::parse_string_value(row_json, kpos);
-
-                while (kpos < row_json.size() && row_json[kpos] != ':') ++kpos;
-                ++kpos;
-
-                String value = JsonSerializer::parse_value(row_json, kpos);
-
-                row_headers.push_back(key);
-                row_values.push_back(value);
-            }
-
-            if (!headers_set) {
-                headers = row_headers;
-                headers_set = true;
-            }
-
-            rows_data.push_back(row_values);
-        } else {
-            ++rpos;
+            row_headers.push_back(key);
+            row_values.push_back(value);
         }
+
+        if (!headers_set) {
+            headers = row_headers;
+            headers_set = true;
+        }
+        rows_data.push_back(row_values);
+
+        pos = response.find('{', obj_end + 1);
     }
 
     if (headers.size() == 0) {
@@ -207,6 +190,10 @@ int main(int argc, char* argv[]) {
     }
 
     Logger::instance().set_level(LogLevel::WARNING);
+
+    std::cout << std::unitbuf;  // 禁用 stdout 缓冲，每次输出立即刷新
+    std::cerr << std::unitbuf;  // 禁用 stderr 缓冲
+    std::cin >> std::unitbuf;   // 禁用 stdin 缓冲
 
     std::cout << std::endl;
     print_welcome();
@@ -291,21 +278,17 @@ int main(int argc, char* argv[]) {
         sql.trim();
         if (sql.empty()) continue;
 
-        auto start = std::chrono::high_resolution_clock::now();
-
         String request = JsonSerializer::serialize_request(sql);
 
         try {
             String response = client.send_request(request);
             print_table_result(response);
+            std::cout.flush();
         } catch (const Exception& e) {
             std::cout << "ERROR: " << e.what() << std::endl;
+            std::cout.flush();
         }
 
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-        std::cout << std::fixed << std::setprecision(2);
-        std::cout << "(" << (duration.count() / 1000.0) << " sec)" << std::endl;
         std::cout << std::endl;
     }
 

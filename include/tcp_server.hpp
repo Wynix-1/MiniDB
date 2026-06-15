@@ -5,6 +5,7 @@
 #include "logger.hpp"
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <unistd.h>
 #include <cstring>
 #include <thread>
@@ -62,6 +63,10 @@ public:
 
             LOG_INFO("Client connected");
 
+            // Disable Nagle's algorithm for low latency
+            int nodelay = 1;
+            setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+
             std::thread([this, client_fd, handler]() {
                 handle_client(client_fd, handler);
             }).detach();
@@ -97,6 +102,7 @@ private:
             LOG_DEBUG("Received: " + request);
 
             String response = handler(request);
+            response += "\n";  // Add newline as delimiter
 
             ssize_t bytes_sent = write(client_fd, response.c_str(), response.size());
             if (bytes_sent < 0) {
